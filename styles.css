@@ -1,21 +1,44 @@
+/* YouTube Subscriber Badge - Stylesheet v2.0.0 */
+
 .yt-subs-badge {
-  /* Block-level and on its own line, on purpose: squeezing this inline next
-     to a long/truncated channel name caused it to get clipped or shove the
-     name over, so it always renders as a new line underneath instead. */
   display: block;
   width: fit-content;
   margin-top: 3px;
   padding: 1px 7px;
   font-size: 11px;
   font-weight: 500;
-  line-height: 1.7;
+  line-height: 1.6;
   color: var(--yt-spec-text-secondary, #606060);
   background: var(--yt-spec-badge-chip-background, rgba(0, 0, 0, 0.06));
+  border: 1px solid transparent;
   border-radius: 8px;
   white-space: nowrap;
   user-select: none;
+  transition: opacity 0.2s ease, background 0.2s ease, border-color 0.2s ease;
 }
 
+/* Comment-specific badge: compact & inline */
+.yt-subs-badge--comment {
+  display: inline-block;
+  vertical-align: middle;
+  margin: 0 0 0 6px;
+  padding: 0 5px;
+  font-size: 10px;
+  line-height: 1.5;
+  border-radius: 6px;
+}
+
+/* Watch header badge */
+.yt-subs-badge--watch-header {
+  display: inline-block;
+  vertical-align: middle;
+  margin-left: 8px;
+  margin-top: 0;
+  padding: 2px 8px;
+  font-size: 12px;
+}
+
+/* Pending pulse animation */
 .yt-subs-badge--pending {
   animation: yt-subs-badge-pulse 1.1s ease-in-out infinite;
 }
@@ -23,4 +46,35 @@
 @keyframes yt-subs-badge-pulse {
   0%, 100% { opacity: 0.35; }
   50% { opacity: 0.85; }
+}
+
+/* Hidden state */
+.yt-subs-badge-hidden {
+  display: none !important;
+}
+
+/* Subscriber Milestone Tiers */
+.yt-subs-badge.yt-subs-tier-bronze {
+  color: #e09953;
+  background: rgba(205, 127, 50, 0.15);
+  border-color: rgba(205, 127, 50, 0.32);
+}
+
+.yt-subs-badge.yt-subs-tier-silver {
+  color: #9cbcdb;
+  background: rgba(156, 188, 219, 0.15);
+  border-color: rgba(156, 188, 219, 0.32);
+}
+
+.yt-subs-badge.yt-subs-tier-gold {
+  color: #fbb024;
+  background: rgba(245, 158, 11, 0.15);
+  border-color: rgba(245, 158, 11, 0.32);
+}
+
+.yt-subs-badge.yt-subs-tier-diamond {
+  color: #ff5277;
+  background: rgba(255, 0, 51, 0.15);
+  border-color: rgba(255, 0, 51, 0.38);
+  font-weight: 600;
 }

@@ -1,0 +1,127 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>YouTube Subscriber Badge Settings</title>
+  <link rel="stylesheet" href="popup.css">
+</head>
+<body>
+  <div class="popup-container">
+    <!-- Header -->
+    <header class="header">
+      <div class="brand">
+        <img src="../icons/icon32.png" alt="Logo" class="logo">
+        <div class="title-group">
+          <h1>YouTube Subs Badge</h1>
+          <span class="version-badge">v2.0.0</span>
+        </div>
+      </div>
+      <label class="switch master-switch" title="Master toggle">
+        <input type="checkbox" id="toggle-master" checked>
+        <span class="slider"></span>
+      </label>
+    </header>
+
+    <main class="content" id="main-content">
+      <!-- Surface Toggles -->
+      <section class="card">
+        <h2 class="card-title">Display Locations</h2>
+        <div class="setting-row">
+          <span class="setting-label">Home & Recommendations</span>
+          <label class="switch">
+            <input type="checkbox" id="toggle-feed" checked>
+            <span class="slider"></span>
+          </label>
+        </div>
+        <div class="setting-row">
+          <span class="setting-label">Search Results</span>
+          <label class="switch">
+            <input type="checkbox" id="toggle-search" checked>
+            <span class="slider"></span>
+          </label>
+        </div>
+        <div class="setting-row">
+          <span class="setting-label">Watch Page Sidebar</span>
+          <label class="switch">
+            <input type="checkbox" id="toggle-sidebar" checked>
+            <span class="slider"></span>
+          </label>
+        </div>
+        <div class="setting-row">
+          <div class="label-with-hint">
+            <span class="setting-label">Comments Section</span>
+            <span class="badge-tag new-tag">New</span>
+          </div>
+          <label class="switch">
+            <input type="checkbox" id="toggle-comments" checked>
+            <span class="slider"></span>
+          </label>
+        </div>
+      </section>
+
+      <!-- Badge Appearance -->
+      <section class="card">
+        <h2 class="card-title">Badge Appearance</h2>
+        <div class="format-options">
+          <label class="radio-chip">
+            <input type="radio" name="badge-format" value="emoji" checked>
+            <span class="chip-content">👥 12.3K</span>
+          </label>
+          <label class="radio-chip">
+            <input type="radio" name="badge-format" value="label">
+            <span class="chip-content">12.3K subs</span>
+          </label>
+          <label class="radio-chip">
+            <input type="radio" name="badge-format" value="compact">
+            <span class="chip-content">12.3K</span>
+          </label>
+        </div>
+
+        <div class="setting-row tier-row">
+          <div class="label-with-hint">
+            <span class="setting-label">Subscriber Milestone Colors</span>
+            <span class="badge-tag">Tiered</span>
+          </div>
+          <label class="switch">
+            <input type="checkbox" id="toggle-tiers" checked>
+            <span class="slider"></span>
+          </label>
+        </div>
+
+        <div class="tier-legend" id="tier-legend">
+          <span class="tier-pill tier-bronze">&lt;10K</span>
+          <span class="tier-pill tier-silver">10K–100K</span>
+          <span class="tier-pill tier-gold">100K–1M</span>
+          <span class="tier-pill tier-diamond">1M+</span>
+        </div>
+      </section>
+
+      <!-- Cache & Storage -->
+      <section class="card cache-card">
+        <div class="cache-info">
+          <div>
+            <div class="card-title">Local Cache</div>
+            <div class="cache-count" id="cache-status">Loading stats...</div>
+          </div>
+          <button id="btn-clear-cache" class="btn btn-secondary" title="Clear cached subscriber counts">
+            Clear Cache
+          </button>
+        </div>
+        <div id="action-feedback" class="action-feedback"></div>
+      </section>
+    </main>
+
+    <!-- Footer -->
+    <footer class="footer">
+      <a href="https://github.com/aajli-Abdallah/YouTube-Subscriber-Badge" target="_blank" rel="noopener noreferrer">
+        GitHub Repository
+      </a>
+      <span class="dot-separator">•</span>
+      <span>No API Key Required</span>
+    </footer>
+  </div>
+
+  <script src="popup.js"></script>
+</body>
+</html>

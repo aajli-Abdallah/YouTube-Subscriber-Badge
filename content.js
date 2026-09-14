@@ -1,44 +1,46 @@
-// YouTube Subscriber Badge
-// Scrapes each channel's public "About" page for its subscriber-count text
-// (no API key required), caches results locally, and injects a small
-// "👥 12.3K" badge under the channel name on suggested/recommended videos.
-//
-// YouTube's UI is built out of Web Components with *shadow DOM* (search
-// results, the watch-page sidebar, home grid, etc. each nest their content
-// inside one or more shadow roots), and it's also a single-page app that
-// swaps content in without a full reload. Both of those break naive
-// "watch the document for new nodes" approaches, so this script:
-//   1. Deep-scans through shadow roots wherever it looks (deepQueryAll).
-//   2. Re-scans immediately on YouTube's own `yt-navigate-finish` event
-//      (fired on every client-side page change: opening search, a video, a
-//      channel, etc.), instead of waiting to notice new elements.
-//   3. Also re-scans on a short fallback timer, in case something slips
-//      through both of the above.
-// It intentionally does NOT gate on visibility/IntersectionObserver anymore
-// — that turned out to be unreliable against YouTube's virtualization, and
-// with per-channel caching + a small concurrent-fetch limit, processing
-// every card that exists is still cheap.
+// YouTube Subscriber Badge v2.0.0
+// Displays channel subscriber counts on YouTube video cards, search results,
+// watch sidebar, and comments section without requiring an API key.
 
 (() => {
-  const CACHE_TTL_MS = 6 * 60 * 60 * 1000; // 6 hours
+  const CACHE_TTL_MS = 6 * 60 * 60 * 1000; // 6 hours for valid counts
+  const ERROR_RETRY_TTL_MS = 2 * 60 * 1000; // 2 minutes retry for network errors
   const MAX_CONCURRENT_FETCHES = 2;
   const FETCH_SPACING_MS = 200;
-  const MAX_LINK_RETRIES = 12;
+  const MAX_LINK_RETRIES = 10;
   const LINK_RETRY_DELAY_MS = 300;
-  const RESCAN_INTERVAL_MS = 1200;
+  const RESCAN_INTERVAL_MS = 1500;
+  const DEBOUNCE_MUTATION_MS = 150;
 
-  const DEBUG = false; // flip to true and check the console if badges still don't show up
+  const DEBUG = false;
+
+  const DEFAULT_SETTINGS = {
+    masterEnabled: true,
+    showOnFeed: true,
+    showOnSearch: true,
+    showOnSidebar: true,
+    showOnComments: true,
+    badgeFormat: 'emoji', // 'emoji' | 'label' | 'compact'
+    colorTiers: true
+  };
+
+  let currentSettings = Object.assign({}, DEFAULT_SETTINGS);
 
   const RENDERER_SELECTOR = [
-    'ytd-compact-video-renderer', // watch-page "up next" sidebar (legacy)
+    // Video cards
+    'ytd-compact-video-renderer', // watch-page sidebar (legacy)
     'ytd-video-renderer', // search results (legacy)
     'ytd-rich-item-renderer', // home page grid (legacy wrapper)
     'ytd-grid-video-renderer', // channel/grid pages (legacy)
     'ytd-reel-item-renderer', // shorts shelf (legacy)
-    'yt-lockup-view-model', // new unified video card (sidebar, grid, search)
-    'ytm-shorts-lockup-view-model', // shorts (new)
-    'ytm-shorts-lockup-view-model-v2', // shorts (new v2)
-    'grid-shelf-view-model' // shelf items (new)
+    'yt-lockup-view-model', // modern unified video card (sidebar, grid, search)
+    'ytm-shorts-lockup-view-model', // shorts
+    'ytm-shorts-lockup-view-model-v2', // shorts v2
+    'grid-shelf-view-model', // shelf items
+    'ytd-channel-renderer', // search channel cards
+    // Comments
+    'ytd-comment-view-model', // modern comments
+    'ytd-comment-thread-renderer' // legacy comment threads
   ].join(', ');
 
   function log(...args) {
@@ -46,11 +48,119 @@
   }
 
   // ---------------------------------------------------------------------
+  // Settings Management
+  // ---------------------------------------------------------------------
+
+  function loadSettings() {
+    try {
+      chrome.storage.local.get(['yt_subs_settings'], (result) => {
+        if (result && result.yt_subs_settings) {
+          currentSettings = Object.assign({}, DEFAULT_SETTINGS, result.yt_subs_settings);
+        }
+        applySettingsToAllBadges();
+      });
+    } catch {
+      /* Extension context may be invalidated during reload */
+    }
+  }
+
+  try {
+    chrome.storage.onChanged.addListener((changes, area) => {
+      if (area === 'local' && changes.yt_subs_settings) {
+        currentSettings = Object.assign({}, DEFAULT_SETTINGS, changes.yt_subs_settings.newValue || {});
+        applySettingsToAllBadges();
+      }
+    });
+  } catch {
+    /* ignore */
+  }
+
+  function isSurfaceEnabled(surface) {
+    if (!currentSettings.masterEnabled) return false;
+    if (surface === 'feed') return currentSettings.showOnFeed;
+    if (surface === 'search') return currentSettings.showOnSearch;
+    if (surface === 'sidebar') return currentSettings.showOnSidebar;
+    if (surface === 'comments') return currentSettings.showOnComments;
+    return true;
+  }
+
+  function parseSubscriberCount(str) {
+    if (!str) return null;
+    const clean = str.trim().toUpperCase().replace(/,/g, '');
+    const match = clean.match(/^([\d.]+)\s*([KMB])?$/);
+    if (!match) return null;
+    const val = parseFloat(match[1]);
+    if (isNaN(val)) return null;
+    const multiplier = match[2];
+    if (multiplier === 'K') return val * 1e3;
+    if (multiplier === 'M') return val * 1e6;
+    if (multiplier === 'B') return val * 1e9;
+    return val;
+  }
+
+  function getSubscriberTier(num) {
+    if (num === null || num === undefined) return null;
+    if (num < 10000) return 'bronze';
+    if (num < 100000) return 'silver';
+    if (num < 1000000) return 'gold';
+    return 'diamond';
+  }
+
+  function formatBadgeText(rawSubs) {
+    if (!rawSubs) return '';
+    switch (currentSettings.badgeFormat) {
+      case 'label':
+        return `${rawSubs} subs`;
+      case 'compact':
+        return rawSubs;
+      case 'emoji':
+      default:
+        return `👥 ${rawSubs}`;
+    }
+  }
+
+  function applySettingsToBadge(badge) {
+    if (!badge || !badge.isConnected) return;
+    const surface = badge.dataset.surface || 'feed';
+    const enabled = isSurfaceEnabled(surface);
+
+    if (!enabled) {
+      badge.classList.add('yt-subs-badge-hidden');
+      return;
+    }
+    badge.classList.remove('yt-subs-badge-hidden');
+
+    const subs = badge.dataset.subs;
+    if (!subs) return;
+
+    badge.textContent = formatBadgeText(subs);
+
+    // Remove existing tier classes
+    badge.classList.remove(
+      'yt-subs-tier-bronze',
+      'yt-subs-tier-silver',
+      'yt-subs-tier-gold',
+      'yt-subs-tier-diamond'
+    );
+
+    if (currentSettings.colorTiers) {
+      const count = parseSubscriberCount(subs);
+      const tier = getSubscriberTier(count);
+      if (tier) {
+        badge.classList.add(`yt-subs-tier-${tier}`);
+      }
+    }
+  }
+
+  function applySettingsToAllBadges() {
+    const badges = document.querySelectorAll('.yt-subs-badge');
+    badges.forEach(applySettingsToBadge);
+  }
+
+  // ---------------------------------------------------------------------
   // Shadow-DOM-piercing query helper
   // ---------------------------------------------------------------------
 
-  // Recursively collects every element matching `selector`, descending into
-  // any open shadow root it encounters along the way (at any depth).
   function deepQueryAll(root, selector) {
     const out = [];
     const stack = [root];
@@ -70,7 +180,7 @@
   // Fetch queue + cache
   // ---------------------------------------------------------------------
 
-  const inFlight = new Map(); // channelUrl -> Promise<string|null>
+  const inFlight = new Map();
   const queue = [];
   let activeFetches = 0;
 
@@ -95,7 +205,7 @@
     try {
       const url = new URL(href, location.origin);
       const path = url.pathname.replace(/\/+$/, '');
-      if (!/^\/(@[^/]+|channel\/[^/]+|c\/[^/]+)$/.test(path)) return null;
+      if (!/^\/(@[^/]+|channel\/[^/]+|c\/[^/]+|user\/[^/]+)$/.test(path)) return null;
       return `https://www.youtube.com${path}`;
     } catch {
       return null;
@@ -103,14 +213,34 @@
   }
 
   function extractSubscriberText(html) {
+    if (!html) return null;
+
+    // Pattern 1: standard subscriberCountText with accessibility
     let m = html.match(
       /"subscriberCountText":\{"accessibility":\{"accessibilityData":\{"label":"([^"]+)"\}\},"simpleText":"([^"]+)"\}/
     );
     let raw = m ? (m[2] || m[1]) : null;
+
+    // Pattern 2: simpleText only
     if (!raw) {
       m = html.match(/"subscriberCountText":\{"simpleText":"([^"]+)"\}/);
       raw = m ? m[1] : null;
     }
+
+    // Pattern 3: runs array structure
+    if (!raw) {
+      m = html.match(/"subscriberCountText":\{"runs":\[\{"text":"([^"]+)"\}/);
+      raw = m ? m[1] : null;
+    }
+
+    // Pattern 4: videoOwnerRenderer subtitle fallback
+    if (!raw) {
+      m = html.match(/"subtitle":\{"runs":\[\{"text":"([^"]+)"\}\]\}/);
+      if (m && /subscribers?/i.test(m[1])) {
+        raw = m[1];
+      }
+    }
+
     if (!raw) return null;
     return raw.replace(/\s*subscribers?/i, '').trim();
   }
@@ -118,7 +248,7 @@
   function getCached(key) {
     return new Promise((resolve) => {
       try {
-        chrome.storage.local.get([key], (res) => resolve(res[key] || null));
+        chrome.storage.local.get([key], (res) => resolve(res ? res[key] || null : null));
       } catch {
         resolve(null);
       }
@@ -136,28 +266,40 @@
   async function fetchSubscriberCount(channelUrl) {
     const aboutUrl = `${channelUrl}/about`;
     const res = await fetch(aboutUrl, { credentials: 'same-origin' });
-    if (!res.ok) return null;
+    if (!res.ok) {
+      if (res.status === 429) {
+        log('rate limited (429) for', channelUrl);
+      }
+      return { subs: null, isError: true };
+    }
     const html = await res.text();
-    return extractSubscriberText(html);
+    const subs = extractSubscriberText(html);
+    return { subs, isError: false };
   }
 
   async function getSubscriberCount(channelUrl) {
     const cached = await getCached(channelUrl);
-    if (cached && Date.now() - cached.ts < CACHE_TTL_MS) {
+    const ttl = (cached && cached.isError) ? ERROR_RETRY_TTL_MS : CACHE_TTL_MS;
+
+    if (cached && Date.now() - cached.ts < ttl) {
       return cached.subs;
     }
     if (inFlight.has(channelUrl)) return inFlight.get(channelUrl);
 
     const promise = new Promise((resolve) => {
       enqueue(async () => {
-        let subs = null;
+        let result = { subs: null, isError: false };
         try {
-          subs = await fetchSubscriberCount(channelUrl);
+          result = await fetchSubscriberCount(channelUrl);
         } catch {
-          subs = null;
+          result = { subs: null, isError: true };
         }
-        setCached(channelUrl, { subs, ts: Date.now() });
-        resolve(subs);
+        setCached(channelUrl, {
+          subs: result.subs,
+          isError: result.isError,
+          ts: Date.now()
+        });
+        resolve(result.subs);
       });
     });
     inFlight.set(channelUrl, promise);
@@ -166,14 +308,37 @@
   }
 
   // ---------------------------------------------------------------------
-  // Finding the channel link + a good place to put the badge
+  // Channel link discovery & surface detection
   // ---------------------------------------------------------------------
 
-  function findChannelLink(container) {
-    // Don't rely on ids/classes (YouTube renames these often, and the actual
-    // markup usually lives inside the container's own shadow root). Instead,
-    // deep-scan for every link and pick the one that (a) points at a channel
-    // and (b) has visible text — that rules out the avatar-only link.
+  function detectSurface(container) {
+    if (container.closest('ytd-comments, #comments, ytd-comment-thread-renderer, ytd-comment-view-model')) {
+      return 'comments';
+    }
+    if (location.pathname === '/results' || container.closest('ytd-search, #search')) {
+      return 'search';
+    }
+    if (location.pathname === '/watch') {
+      if (container.closest('#secondary, #related, ytd-watch-next-secondary-results-renderer')) {
+        return 'sidebar';
+      }
+      if (container.closest('ytd-watch-metadata, #owner')) {
+        return 'sidebar';
+      }
+    }
+    return 'feed';
+  }
+
+  function findChannelLink(container, isComment) {
+    if (isComment) {
+      const commentAuthor =
+        container.querySelector('a#author-text, #author-text a, a.yt-simple-endpoint') ||
+        deepQueryAll(container, 'a#author-text, a.yt-simple-endpoint')[0];
+      if (commentAuthor && normalizeChannelUrl(commentAuthor.getAttribute('href'))) {
+        return commentAuthor;
+      }
+    }
+
     const anchors = deepQueryAll(container, 'a[href]');
     let fallback = null;
     for (const a of anchors) {
@@ -187,26 +352,41 @@
     return fallback;
   }
 
-  // Long/truncated channel names live in a tightly-fitted row. Rather than
-  // squeezing our badge into that same row (where it can get clipped or
-  // shove the name further), we anchor to the row itself and render the
-  // badge as its own block underneath it.
-  function getInsertionAnchor(link) {
+  function getInsertionAnchor(link, isComment) {
+    if (isComment) {
+      return (
+        link.closest('#header-author, #author-comment-badge, #author-text') ||
+        link.parentElement ||
+        link
+      );
+    }
+
     return (
       link.closest(
         'yt-content-metadata-view-model, ytd-channel-name, #channel-name, #byline-container, #metadata'
-      ) || link.parentElement ||
+      ) ||
+      link.parentElement ||
       link
     );
   }
 
-  function insertBadge(link) {
-    const anchor = getInsertionAnchor(link);
+  function insertBadge(link, surface, isComment) {
+    const anchor = getInsertionAnchor(link, isComment);
     if (anchor.nextElementSibling && anchor.nextElementSibling.classList.contains('yt-subs-badge')) {
       return anchor.nextElementSibling;
     }
+
     const badge = document.createElement('span');
     badge.className = 'yt-subs-badge yt-subs-badge--pending';
+    if (isComment) {
+      badge.classList.add('yt-subs-badge--comment');
+    }
+    badge.dataset.surface = surface;
+
+    if (!isSurfaceEnabled(surface)) {
+      badge.classList.add('yt-subs-badge-hidden');
+    }
+
     badge.textContent = '👥 •••';
     anchor.insertAdjacentElement('afterend', badge);
     return badge;
@@ -215,15 +395,21 @@
   function resolveBadge(badge, subs) {
     if (!badge || !badge.isConnected) return;
     if (!subs) {
-      badge.remove(); // hidden/unavailable subscriber count — don't leave a placeholder
+      badge.remove();
       return;
     }
-    badge.textContent = `👥 ${subs}`;
+    badge.dataset.subs = subs;
     badge.classList.remove('yt-subs-badge--pending');
+    applySettingsToBadge(badge);
   }
 
   function handleContainer(container, attempt = 0) {
-    const link = findChannelLink(container);
+    const isComment = !!container.closest('ytd-comment-view-model, ytd-comment-thread-renderer');
+    const surface = detectSurface(container);
+
+    if (!isSurfaceEnabled(surface)) return;
+
+    const link = findChannelLink(container, isComment);
     if (!link) {
       if (attempt < MAX_LINK_RETRIES) {
         setTimeout(() => handleContainer(container, attempt + 1), LINK_RETRY_DELAY_MS);
@@ -233,25 +419,25 @@
       return;
     }
     if (link.dataset.subsBadgeDone) return;
+
     const channelUrl = normalizeChannelUrl(link.getAttribute('href'));
     if (!channelUrl) return;
     link.dataset.subsBadgeDone = '1';
 
-    const badge = insertBadge(link);
-    log('fetching', channelUrl);
+    const badge = insertBadge(link, surface, isComment);
     getSubscriberCount(channelUrl).then((subs) => {
-      log('result', channelUrl, subs);
       resolveBadge(badge, subs);
     });
   }
 
   // ---------------------------------------------------------------------
-  // Discovering video cards
+  // Discovery & Rescan Engine
   // ---------------------------------------------------------------------
 
   const seenContainers = new WeakSet();
 
   function scan(root) {
+    if (!currentSettings.masterEnabled) return;
     const containers = deepQueryAll(root, RENDERER_SELECTOR);
     let found = 0;
     for (const container of containers) {
@@ -267,24 +453,29 @@
     scan(document);
   }
 
+  let debounceTimer = null;
+  function debouncedRescan() {
+    if (debounceTimer) clearTimeout(debounceTimer);
+    debounceTimer = setTimeout(() => {
+      rescan();
+    }, DEBOUNCE_MUTATION_MS);
+  }
+
   function init() {
+    loadSettings();
     rescan();
 
-    // React immediately to YouTube's own SPA navigation event, rather than
-    // waiting for the fallback timer.
+    // YouTube SPA navigation
     document.addEventListener('yt-navigate-finish', () => {
       log('yt-navigate-finish -> rescanning');
       rescan();
     });
 
-    // Light-DOM mutation observer as a fast-path for ordinary additions
-    // (infinite scroll, etc.). Harmless if it misses shadow-only changes,
-    // since the interval below covers those.
-    const mo = new MutationObserver(() => rescan());
+    // Debounced MutationObserver for dynamic infinite scroll
+    const mo = new MutationObserver(() => debouncedRescan());
     mo.observe(document.documentElement, { childList: true, subtree: true });
 
-    // Fallback net: catches anything created inside shadow roots that the
-    // observer above can't see, and anything the navigate event missed.
+    // Periodic safety net for open shadow roots
     setInterval(rescan, RESCAN_INTERVAL_MS);
   }
 
