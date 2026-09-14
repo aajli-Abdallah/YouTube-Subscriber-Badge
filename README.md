@@ -1,5 +1,9 @@
 # YouTube Subscriber Badge v2.0.0
 
+![Version](https://img.shields.io/badge/version-2.0.0-red.svg)
+![Manifest](https://img.shields.io/badge/manifest-v3-blue.svg)
+![Platform](https://img.shields.io/badge/platform-Chrome%20%7C%20Edge%20%7C%20Brave-green.svg)
+
 A lightweight, API-key-free browser extension that displays subscriber counts next to channel names across YouTube: home feed, search results, watch sidebar, and the comments section.
 
 ---
@@ -27,6 +31,28 @@ A lightweight, API-key-free browser extension that displays subscriber counts ne
 
 ---
 
+## 📦 Installation
+
+### Option 1: Download from Releases (Recommended)
+1. Download `yt-subs-badge-v2.0.0.zip` from [GitHub Releases](https://github.com/aajli-Abdallah/YouTube-Subscriber-Badge/releases/latest).
+2. Extract the downloaded `.zip` file.
+3. Open your browser extension manager:
+   - Chrome: `chrome://extensions`
+   - Edge: `edge://extensions`
+   - Brave: `brave://extensions`
+4. Enable **Developer mode** in the top-right corner.
+5. Click **Load unpacked** and select the extracted folder.
+
+### Option 2: Clone the Repository
+1. Clone this repository to your computer:
+   ```bash
+   git clone https://github.com/aajli-Abdallah/YouTube-Subscriber-Badge.git
+   ```
+2. In your browser's extension manager (`chrome://extensions`), enable **Developer mode**.
+3. Click **Load unpacked** and select the cloned `YouTube-Subscriber-Badge` directory.
+
+---
+
 ## 🛠️ How It Works
 
 YouTube doesn't embed subscriber counts directly into suggested feed cards or comments. This extension:
@@ -35,22 +61,6 @@ YouTube doesn't embed subscriber counts directly into suggested feed cards or co
 3. Caches counts per-channel in `chrome.storage.local` to minimize network overhead.
 4. Throttles concurrent requests with rate-limiting protection.
 5. Dynamically injects styled badges under channel titles and inline next to comment usernames.
-
----
-
-## 📦 Installation (Load Unpacked)
-
-1. Clone or download this repository:
-   ```bash
-   git clone https://github.com/aajli-Abdallah/YouTube-Subscriber-Badge.git
-   ```
-2. Open your browser extension manager:
-   - Chrome: `chrome://extensions`
-   - Edge: `edge://extensions`
-   - Brave: `brave://extensions`
-3. Enable **Developer mode** in the top right corner.
-4. Click **Load unpacked** and select the extension folder (`YouTube-Subscriber-Badge`).
-5. Open or refresh [YouTube](https://www.youtube.com) — click the extension icon in your browser toolbar to customize settings.
 
 ---
 
