@@ -1,0 +1,16 @@
+{
+  "manifest_version": 3,
+  "name": "YouTube Subscriber Badge",
+  "version": "1.0.3",
+  "description": "Shows a 👥 subscriber-count badge next to channel names on YouTube suggested/recommended videos.",
+  "permissions": ["storage"],
+  "host_permissions": ["https://www.youtube.com/*"],
+  "content_scripts": [
+    {
+      "matches": ["https://www.youtube.com/*"],
+      "js": ["content.js"],
+      "css": ["styles.css"],
+      "run_at": "document_idle"
+    }
+  ]
+}
