@@ -212,37 +212,77 @@
     }
   }
 
-  function extractSubscriberText(html) {
+  function extractSubscriberText(html, channelUrl) {
     if (!html) return null;
 
-    // Pattern 1: standard subscriberCountText with accessibility
-    let m = html.match(
-      /"subscriberCountText":\{"accessibility":\{"accessibilityData":\{"label":"([^"]+)"\}\},"simpleText":"([^"]+)"\}/
-    );
-    let raw = m ? (m[2] || m[1]) : null;
-
-    // Pattern 2: simpleText only
-    if (!raw) {
-      m = html.match(/"subscriberCountText":\{"simpleText":"([^"]+)"\}/);
-      raw = m ? m[1] : null;
-    }
-
-    // Pattern 3: runs array structure
-    if (!raw) {
-      m = html.match(/"subscriberCountText":\{"runs":\[\{"text":"([^"]+)"\}/);
-      raw = m ? m[1] : null;
-    }
-
-    // Pattern 4: videoOwnerRenderer subtitle fallback
-    if (!raw) {
-      m = html.match(/"subtitle":\{"runs":\[\{"text":"([^"]+)"\}\]\}/);
-      if (m && /subscribers?/i.test(m[1])) {
-        raw = m[1];
+    // Modern channel pages store the channel's own count as a plain string in
+    // channelAboutFullMetadataRenderer, followed by its canonical URL.  The
+    // same response also has object-shaped counts for channels linked in the
+    // About text, so associate this value with the URL we actually requested.
+    try {
+      const requestedPath = new URL(channelUrl).pathname.toLowerCase();
+      const countPattern = /"subscriberCountText":"([^"]+)"/g;
+      let countMatch;
+      while ((countMatch = countPattern.exec(html))) {
+        const following = html.slice(countMatch.index, countMatch.index + 4000).toLowerCase();
+        const isRequestedChannel =
+          following.includes(`"canonicalchannelurl":"http://www.youtube.com${requestedPath}`) ||
+          following.includes(`"canonicalchannelurl":"https://www.youtube.com${requestedPath}`);
+        const normalized = countMatch[1].replace(/\s*subscribers?/i, '').trim();
+        if (isRequestedChannel && parseSubscriberCount(normalized) !== null) {
+          return normalized;
+        }
       }
+    } catch {
+      // Continue with the older response shapes below.
     }
 
-    if (!raw) return null;
-    return raw.replace(/\s*subscribers?/i, '').trim();
+    // A channel /about response contains data for its video shelves as well as
+    // the channel header.  Using String.match() here used the first count in
+    // the payload, which can be a completely unrelated channel on that page.
+    // Gather every subscriberCountText and favour the one inside the header.
+    const candidates = [];
+    let offset = 0;
+    while (true) {
+      const index = html.indexOf('"subscriberCountText":', offset);
+      if (index === -1) break;
+
+      // subscriberCountText is a small object; its rendered string occurs
+      // shortly after the field name in all current YouTube response shapes.
+      const field = html.slice(index, index + 1200);
+      const textMatch =
+        field.match(/"simpleText":"([^"]+)"/) ||
+        field.match(/"text":"([^"]+)"/) ||
+        field.match(/"label":"([^"]+subscribers?)"/i);
+      const raw = textMatch && textMatch[1];
+      const normalized = raw && raw.replace(/\s*subscribers?/i, '').trim();
+
+      if (normalized && parseSubscriberCount(normalized) !== null) {
+        const context = html.slice(Math.max(0, index - 12000), index + 1200);
+        let score = 0;
+        if (/c4TabbedHeaderRenderer|channelHeaderRenderer|pageHeaderRenderer|channelMetadataRenderer/i.test(context)) {
+          score += 100;
+        }
+        if (/videoRenderer|compactVideoRenderer|richItemRenderer|reelItemRenderer/i.test(context)) {
+          score -= 10;
+        }
+        candidates.push({ normalized, score, index });
+      }
+      offset = index + 1;
+    }
+
+    if (candidates.length) {
+      candidates.sort((a, b) => b.score - a.score || a.index - b.index);
+      return candidates[0].normalized;
+    }
+
+    // Compatibility fallback for older response formats that do not expose
+    // subscriberCountText on the channel header.
+    const subtitle = html.match(/"subtitle":\{"runs":\[\{"text":"([^"]+)"\}\]\}/);
+    if (subtitle && /subscribers?/i.test(subtitle[1])) {
+      return subtitle[1].replace(/\s*subscribers?/i, '').trim();
+    }
+    return null;
   }
 
   function getCached(key) {
@@ -273,12 +313,15 @@
       return { subs: null, isError: true };
     }
     const html = await res.text();
-    const subs = extractSubscriberText(html);
+    const subs = extractSubscriberText(html, channelUrl);
     return { subs, isError: false };
   }
 
   async function getSubscriberCount(channelUrl) {
-    const cached = await getCached(channelUrl);
+    // Bump the cache namespace when extraction logic changes so an incorrect
+    // value from an older version is never shown for its full cache lifetime.
+    const cacheKey = `yt-subs-v3:${channelUrl}`;
+    const cached = await getCached(cacheKey);
     const ttl = (cached && cached.isError) ? ERROR_RETRY_TTL_MS : CACHE_TTL_MS;
 
     if (cached && Date.now() - cached.ts < ttl) {
@@ -294,7 +337,7 @@
         } catch {
           result = { subs: null, isError: true };
         }
-        setCached(channelUrl, {
+        setCached(cacheKey, {
           subs: result.subs,
           isError: result.isError,
           ts: Date.now()

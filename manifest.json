@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "YouTube Subscriber Badge",
-  "version": "2.0.0",
+  "version": "2.0.2",
   "description": "Shows a subscriber-count badge next to channel names on YouTube feeds, search results, watch sidebar, and comments.",
   "permissions": ["storage"],
   "host_permissions": ["https://www.youtube.com/*"],
